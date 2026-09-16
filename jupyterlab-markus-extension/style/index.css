@@ -1,1 +1,18 @@
-/* No custom styles. */
+/* MarkUs extension styles. */
+
+.markus-dialog-logo {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 12px;
+  background-image: url('./logo/markus.ico');
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.markus-toolbar-icon {
+  background-image: url('./logo/markus.ico');
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+}

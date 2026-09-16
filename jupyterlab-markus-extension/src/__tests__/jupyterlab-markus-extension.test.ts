@@ -38,13 +38,12 @@ import {
   assertTrustedOrigin,
   buildSubmitPayload,
   getCurrentNotebookPanel,
-  getMarkusMetadata,
   getNotebookName,
   getTrustedOrigins,
   normalizeBaseUrl,
-  parseMarkusId,
   submitWithSessionRetry
 } from '../jupyterlab-markus-extension';
+
 import { invalidateSession } from '../session';
 
 const mockGetBaseUrl = PageConfig.getBaseUrl as jest.Mock;
@@ -93,7 +92,7 @@ describe('normalizeBaseUrl', () => {
   });
 
   it('throws a friendly error on an invalid URL', () => {
-    expect(() => normalizeBaseUrl('not-a-url')).toThrow(/is not a valid URL/);
+    expect(() => normalizeBaseUrl('not-a-url')).toThrow(/MarkUs server URL is not valid/);
   });
 
   it('appends a trailing slash when missing', () => {
@@ -106,29 +105,6 @@ describe('normalizeBaseUrl', () => {
 
   it('preserves a sub-path while adding the trailing slash', () => {
     expect(normalizeBaseUrl('http://localhost:3000/csc108')).toBe('http://localhost:3000/csc108/');
-  });
-});
-
-describe('parseMarkusId', () => {
-  it.each([
-    ['42', 42],
-    [42, 42],
-    ['1', 1]
-  ])('accepts %p as a valid id', (value, expected) => {
-    expect(parseMarkusId(value as number | string, 'course_id')).toBe(expected);
-  });
-
-  it.each([[''], ['1e3'], ['0x1F'], ['Infinity'], ['1.5'], ['0'], ['007'], [' 42 '], ['-1'], [-1], [1.5], [0]])(
-    'rejects %p as an invalid id',
-    (value) => {
-      expect(() => parseMarkusId(value as number | string, 'course_id')).toThrow(
-        'Notebook metadata value "course_id" must be a positive integer.'
-      );
-    }
-  );
-
-  it('includes the field name in the error message', () => {
-    expect(() => parseMarkusId('bad', 'assignment_id')).toThrow(/"assignment_id"/);
   });
 });
 
@@ -159,49 +135,24 @@ describe('assertTrustedOrigin', () => {
 });
 
 describe('getTrustedOrigins', () => {
-  it('returns the configured origins, filtering out non-string entries', () => {
-    const settings = makeSettings(['https://markus.example.com', 42, null]);
-    expect(getTrustedOrigins(settings)).toEqual(expect.arrayContaining(['https://markus.example.com']));
+  it('returns configured origins and filters out invalid entries', () => {
+    const settings = makeSettings([
+      'https://markus.example.com',
+      42,
+      null,
+      '',
+      '   '
+    ]);
+
+    expect(getTrustedOrigins(settings)).toEqual([
+      'https://markus.example.com'
+    ]);
   });
 
-  it('treats a non-array composite value as no configured origins', () => {
+  it('returns an empty array when the setting is not an array', () => {
     const settings = makeSettings(undefined);
-    // Jest's own runtime is not a production build, so the development-only
-    // origin is still present -- see the "in a production build" suite below
-    // for the security-relevant case where it must NOT be.
-    expect(getTrustedOrigins(settings)).toContain('http://localhost:3000');
-  });
 
-  it('always includes the development-only origin alongside whatever is configured', () => {
-    const settings = makeSettings(['https://markus.example.com']);
-    expect(getTrustedOrigins(settings)).toEqual(
-      expect.arrayContaining(['https://markus.example.com', 'http://localhost:3000'])
-    );
-  });
-
-  describe('in a production build', () => {
-    const originalNodeEnv = process.env.NODE_ENV;
-
-    beforeEach(() => {
-      process.env.NODE_ENV = 'production';
-      jest.resetModules();
-    });
-
-    afterEach(() => {
-      process.env.NODE_ENV = originalNodeEnv;
-      jest.resetModules();
-    });
-
-    it('never trusts the development-only origin', () => {
-      // Re-required with NODE_ENV already set to "production" so the
-      // module's build-time DEVELOPMENT_DEFAULT_TRUSTED_ORIGINS constant
-      // evaluates the way a real production bundle's would.
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const prod = require('../jupyterlab-markus-extension');
-      const settings = makeSettings([]);
-
-      expect(prod.getTrustedOrigins(settings)).toEqual([]);
-    });
+    expect(getTrustedOrigins(settings)).toEqual([]);
   });
 });
 
@@ -237,95 +188,13 @@ describe('getNotebookName', () => {
   });
 });
 
-describe('getMarkusMetadata', () => {
-  const validMarkus = {
-    url: 'http://localhost:3000',
-    course_id: 1,
-    assignment_id: 2
-  };
-
-  it('throws when the "markus" key is missing', () => {
-    const panel = makePanel({ metadata: {} });
-    expect(() => getMarkusMetadata(panel)).toThrow('missing the "markus" key');
-  });
-
-  it('throws when "url" is missing', () => {
-    const panel = makePanel({ metadata: { markus: { course_id: 1, assignment_id: 2 } } });
-    expect(() => getMarkusMetadata(panel)).toThrow('missing required MarkUs key: "url"');
-  });
-
-  it('throws when neither course_id nor course is present', () => {
-    const panel = makePanel({
-      metadata: { markus: { url: 'http://localhost:3000', assignment_id: 2 } }
-    });
-    expect(() => getMarkusMetadata(panel)).toThrow('must include either "course_id" or "course"');
-  });
-
-  it('throws when both course_id and course are present', () => {
-    const panel = makePanel({
-      metadata: {
-        markus: { url: 'http://localhost:3000', course_id: 1, course: 'csc108', assignment_id: 2 }
-      }
-    });
-    expect(() => getMarkusMetadata(panel)).toThrow('only one of "course_id" or "course"');
-  });
-
-  it('throws when neither assignment_id nor assignment is present', () => {
-    const panel = makePanel({
-      metadata: { markus: { url: 'http://localhost:3000', course_id: 1 } }
-    });
-    expect(() => getMarkusMetadata(panel)).toThrow('must include either "assignment_id" or "assignment"');
-  });
-
-  it('throws when both assignment_id and assignment are present', () => {
-    const panel = makePanel({
-      metadata: {
-        markus: { url: 'http://localhost:3000', course_id: 1, assignment_id: 2, assignment: 'a1' }
-      }
-    });
-    expect(() => getMarkusMetadata(panel)).toThrow('only one of "assignment_id" or "assignment"');
-  });
-
-  it('propagates an invalid course_id from parseMarkusId', () => {
-    const panel = makePanel({
-      metadata: { markus: { ...validMarkus, course_id: '1e3' } }
-    });
-    expect(() => getMarkusMetadata(panel)).toThrow('"course_id" must be a positive integer');
-  });
-
-  it('propagates an invalid url from normalizeBaseUrl', () => {
-    const panel = makePanel({
-      metadata: { markus: { ...validMarkus, url: 'not-a-url' } }
-    });
-    expect(() => getMarkusMetadata(panel)).toThrow(/is not a valid URL/);
-  });
-
-  it('returns normalized url and numeric ids on valid metadata', () => {
-    const panel = makePanel({ metadata: { markus: validMarkus } });
-
-    expect(getMarkusMetadata(panel)).toEqual({
-      url: 'http://localhost:3000/',
-      course_id: 1,
-      assignment_id: 2
-    });
-  });
-
-  it('supports an IObservableJSON-style metadata object with .get()', () => {
-    const panel = makePanel({
-      metadata: {
-        get: (key: string) => (key === 'markus' ? validMarkus : undefined)
-      }
-    });
-
-    expect(getMarkusMetadata(panel).url).toBe('http://localhost:3000/');
-  });
-});
-
 describe('buildSubmitPayload', () => {
   const markus = {
     url: 'http://localhost:3000/',
     course_id: 1,
-    assignment_id: 2
+    course: 'csc108',
+    assignment_id: 2,
+    assignment: 'A1'
   };
 
   beforeEach(() => {
@@ -345,15 +214,15 @@ describe('buildSubmitPayload', () => {
     expect(() => buildSubmitPayload(panel, markus, 'session-token')).toThrow('No Jupyter token available.');
   });
 
-  it('assembles the full payload from the panel, markus metadata, PageConfig, and session token', () => {
+  it('assembles the full payload from the panel, MarkUs target, PageConfig, and session token', () => {
     const panel = makePanel({ path: 'nested/demo.ipynb', contentsModelName: 'demo.ipynb' });
 
     expect(buildSubmitPayload(panel, markus, 'session-token')).toEqual({
       notebook_path: 'nested/demo.ipynb',
       course_id: 1,
-      course: undefined,
+      course: 'csc108',
       assignment_id: 2,
-      assignment: undefined,
+      assignment: 'A1',
       jupyter: {
         base_url: 'http://localhost:8888/',
         token: 'test-token'
@@ -367,7 +236,9 @@ describe('submitWithSessionRetry', () => {
   const markus = {
     url: 'http://retry.example.com/',
     course_id: 1,
-    assignment_id: 2
+    course: 'csc108',
+    assignment_id: 2,
+    assignment: 'A1'
   };
 
   let mockFetch: jest.Mock;
@@ -377,7 +248,7 @@ describe('submitWithSessionRetry', () => {
     mockGetToken.mockReset().mockReturnValue('test-token');
     mockFetch = jest.fn();
     (global as any).fetch = mockFetch;
-    invalidateSession(markus);
+    invalidateSession(markus.url);
   });
 
   function authResponse(sessionToken: string): { ok: true; status: 200; text: () => Promise<string> } {

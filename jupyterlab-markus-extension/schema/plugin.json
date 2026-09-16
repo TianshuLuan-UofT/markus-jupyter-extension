@@ -3,14 +3,22 @@
   "description": "Settings for the Submit to MarkUs extension.",
   "type": "object",
   "properties": {
+    "markusUrl": {
+      "type": "string",
+      "default": "https://markus.teach.cs.toronto.edu",
+      "title": "MarkUs server URL",
+      "description": "The MarkUs server used by the Submit to MarkUs extension."
+    },
     "trustedOrigins": {
       "type": "array",
       "items": {
         "type": "string"
       },
-      "default": ["https://markus.teach.cs.toronto.edu"],
+      "default": [
+        "https://markus.teach.cs.toronto.edu"
+      ],
       "title": "Trusted MarkUs origins",
-      "description": "Origins (scheme + host + optional port, e.g. \"https://markus.example.com\") that notebooks are allowed to submit to. The Jupyter API token is sent as part of every submission, so only add MarkUs deployments you trust. A notebook's \"markus\" metadata supplies the submission URL, but that URL's origin must match one of these entries or the submission is rejected."
+      "description": "Origins that the extension is allowed to contact."
     }
   },
   "additionalProperties": false
