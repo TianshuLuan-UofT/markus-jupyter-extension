@@ -78,7 +78,9 @@ interface ISubmitResponse {
 }
 
 // Checking to see if a notebook is open
-export function getCurrentNotebookPanel(tracker: INotebookTracker): NotebookPanel {
+export function getCurrentNotebookPanel(
+  tracker: INotebookTracker
+): NotebookPanel {
   const panel = tracker.currentWidget;
 
   if (!panel) {
@@ -126,7 +128,9 @@ export function getTrustedOrigins(
   );
 }
 
-export function getMarkusUrl(settings: ISettingRegistry.ISettings): string {
+export function getMarkusUrl(
+  settings: ISettingRegistry.ISettings
+): string {
   const value = settings.get(MARKUS_URL_KEY).composite;
 
   if (typeof value !== 'string' || !value.trim()) {
@@ -139,7 +143,10 @@ export function getMarkusUrl(settings: ISettingRegistry.ISettings): string {
 }
 
 // Reject submission targets that are not explicitly trusted.
-export function assertTrustedOrigin(url: string, trustedOrigins: string[]): void {
+export function assertTrustedOrigin(
+  url: string,
+  trustedOrigins: string[]
+): void {
   const origin = new URL(url).origin;
 
   if (trustedOrigins.length === 0) {
@@ -159,10 +166,14 @@ export function assertTrustedOrigin(url: string, trustedOrigins: string[]): void
 
 // Get notebook name from JupyterLab context.
 export function getNotebookName(panel: NotebookPanel): string {
-  const notebookName = panel.context.contentsModel?.name || panel.context.path.split('/').pop();
+  const notebookName =
+    panel.context.contentsModel?.name ||
+    panel.context.path.split('/').pop();
 
   if (!notebookName) {
-    throw new Error('Could not determine notebook name. Please ensure the notebook is saved.');
+    throw new Error(
+      'Could not determine notebook name. Please ensure the notebook is saved.'
+    );
   }
 
   return notebookName;
@@ -214,7 +225,10 @@ async function submitToServer(
 
   if (!response.ok) {
     throw new MarkUsServerError(
-      `MarkUs server error ${response.status}: ${extractErrorMessage(response.status, text)}`,
+      `MarkUs server error ${response.status}: ${extractErrorMessage(
+        response.status,
+        text
+      )}`,
       response.status
     );
   }
@@ -246,35 +260,47 @@ export async function submitWithSessionRetry(
     }
 
     invalidateSession(markus.url);
+
     const freshSessionToken = await getOrCreateSession(markus.url);
-    return await submitToServer(buildSubmitPayload(panel, markus, freshSessionToken), markus);
+
+    return await submitToServer(
+      buildSubmitPayload(panel, markus, freshSessionToken),
+      markus
+    );
   }
 }
 
 // Confirming the submission is successful
-async function reportSuccess(result: ISubmitResponse): Promise<void> {
-  let body = result.message || 'Your file has been submitted successfully.';
+export async function reportSuccess(
+  result: ISubmitResponse
+): Promise<void> {
+  let body =
+    result.message || 'Your file has been submitted successfully.';
 
   if (result.submitted_file) {
     body += `\n\nSubmitted file: ${result.submitted_file}`;
   }
 
+  if (result.markus_target?.course) {
+    body += `\nCourse: ${result.markus_target.course}`;
+  }
+
   if (result.markus_target?.assignment) {
-    body += `\n\nAssignment: ${result.markus_target.assignment}`;
+    body += `\nAssignment: ${result.markus_target.assignment}`;
   }
 
   if (result.markus_target?.markus_user_name) {
-    body += `\n\nSubmitted as: ${result.markus_target.markus_user_name}`;
+    body += `\nSubmitted as: ${result.markus_target.markus_user_name}`;
   }
 
   await showDialog({
-    title: SUBMIT_LABEL,
+    title: 'Submission successful',
     body,
     buttons: [Dialog.okButton({ label: 'Close' })]
   });
 }
 
-async function selectSubmissionTarget(
+export async function selectSubmissionTarget(
   markusUrl: string
 ): Promise<IMarkUsTarget | null> {
   const response = await fetchAvailableAssignments(markusUrl);
@@ -284,9 +310,41 @@ async function selectSubmissionTarget(
   );
 
   if (courses.length === 0) {
+    if (response.reason === 'no_enrollment') {
+      throw new Error(
+        'No active MarkUs course enrollment was found for your account.'
+      );
+    }
+
+    if (response.reason === 'no_available_assignments') {
+      throw new Error(
+        'You are enrolled in MarkUs, but there are no currently available Jupyter-enabled assignments.'
+      );
+    }
+
+    if (response.reason === 'api_submission_disabled') {
+      throw new Error(
+        'A MarkUs assignment is available, but Jupyter/API submission is not enabled for it. Please contact your instructor.'
+      );
+    }
+
     throw new Error(
       'No MarkUs courses with available Jupyter-enabled assignments were found.'
     );
+  }
+
+  // If there is only one possible destination, skip the selection dialog.
+  if (courses.length === 1 && courses[0].assignments.length === 1) {
+    const course = courses[0];
+    const assignment = course.assignments[0];
+
+    return {
+      url: markusUrl,
+      course_id: course.id,
+      course: course.name,
+      assignment_id: assignment.id,
+      assignment: assignment.short_identifier
+    };
   }
 
   const node = document.createElement('div');
@@ -307,10 +365,42 @@ async function selectSubmissionTarget(
   courseLabel.style.marginBottom = '4px';
   node.appendChild(courseLabel);
 
-  const courseSelect = document.createElement('select');
-  courseSelect.style.width = '100%';
-  courseSelect.style.marginBottom = '12px';
-  node.appendChild(courseSelect);
+  let courseSelect: HTMLSelectElement | null = null;
+
+  // When there is only one course, display it as read-only text instead
+  // of a disabled dropdown so students do not mistake it for a broken control.
+  if (courses.length === 1) {
+    const course = courses[0];
+
+    const courseText = document.createElement('div');
+    courseText.textContent = course.display_name
+      ? `${course.name} — ${course.display_name}`
+      : course.name;
+
+    courseText.style.marginBottom = '12px';
+    courseText.style.padding = '6px 8px';
+    courseText.style.background = 'var(--jp-layout-color2)';
+    courseText.style.border = '1px solid var(--jp-border-color2)';
+    courseText.style.borderRadius = '2px';
+
+    node.appendChild(courseText);
+  } else {
+    courseSelect = document.createElement('select');
+    courseSelect.style.width = '100%';
+    courseSelect.style.marginBottom = '12px';
+
+    for (const course of courses) {
+      const option = document.createElement('option');
+      option.value = String(course.id);
+      option.textContent = course.display_name
+        ? `${course.name} — ${course.display_name}`
+        : course.name;
+
+      courseSelect.appendChild(option);
+    }
+
+    node.appendChild(courseSelect);
+  }
 
   const assignmentLabel = document.createElement('label');
   assignmentLabel.textContent = 'Assignment';
@@ -322,21 +412,15 @@ async function selectSubmissionTarget(
   assignmentSelect.style.width = '100%';
   node.appendChild(assignmentSelect);
 
-  for (const course of courses) {
-    const option = document.createElement('option');
-    option.value = String(course.id);
-    option.textContent = course.display_name
-      ? `${course.name} — ${course.display_name}`
-      : course.name;
-    courseSelect.appendChild(option);
-  }
-
   const populateAssignments = (): void => {
     assignmentSelect.replaceChildren();
 
-    const selectedCourse = courses.find(
-      course => course.id === Number(courseSelect.value)
-    );
+    const selectedCourse =
+      courses.length === 1
+        ? courses[0]
+        : courses.find(
+            course => course.id === Number(courseSelect?.value)
+          );
 
     if (!selectedCourse) {
       return;
@@ -345,15 +429,29 @@ async function selectSubmissionTarget(
     for (const assignment of selectedCourse.assignments) {
       const option = document.createElement('option');
       option.value = String(assignment.id);
-      option.textContent = assignment.description
-        ? `${assignment.short_identifier} — ${assignment.description}`
-        : assignment.short_identifier;
+
+      const dueDate = assignment.due_date
+        ? new Date(assignment.due_date).toLocaleString()
+        : null;
+
+      const details = [
+        assignment.description,
+        dueDate ? `Due ${dueDate}` : null
+      ].filter(Boolean);
+
+      option.textContent =
+        details.length > 0
+          ? `${assignment.short_identifier} — ${details.join(' — ')}`
+          : assignment.short_identifier;
 
       assignmentSelect.appendChild(option);
     }
   };
 
-  courseSelect.addEventListener('change', populateAssignments);
+  if (courseSelect) {
+    courseSelect.addEventListener('change', populateAssignments);
+  }
+
   populateAssignments();
 
   const result = await showDialog({
@@ -369,12 +467,17 @@ async function selectSubmissionTarget(
     return null;
   }
 
-  const selectedCourse = courses.find(
-    course => course.id === Number(courseSelect.value)
-  );
+  const selectedCourse =
+    courses.length === 1
+      ? courses[0]
+      : courses.find(
+          course => course.id === Number(courseSelect?.value)
+        );
 
   if (!selectedCourse) {
-    throw new Error('The selected MarkUs course could not be found.');
+    throw new Error(
+      'The selected MarkUs course could not be found.'
+    );
   }
 
   const selectedAssignment = selectedCourse.assignments.find(
@@ -382,7 +485,9 @@ async function selectSubmissionTarget(
   );
 
   if (!selectedAssignment) {
-    throw new Error('The selected MarkUs assignment could not be found.');
+    throw new Error(
+      'The selected MarkUs assignment could not be found.'
+    );
   }
 
   return {
@@ -407,9 +512,11 @@ function createConfirmationBody(
   intro.textContent = 'Submit this notebook to MarkUs?';
   node.appendChild(intro);
 
-  const username = PageConfig.getOption('hubUser') || '(not available)';
+  const username =
+    PageConfig.getOption('hubUser') || '(not available)';
 
   const list = document.createElement('ul');
+
   const items: Array<[string, string]> = [
     ['Notebook', notebookName],
     ['MarkUs URL', markus.url],
@@ -423,6 +530,7 @@ function createConfirmationBody(
 
     const strong = document.createElement('strong');
     strong.textContent = `${label}: `;
+
     item.appendChild(strong);
     item.appendChild(document.createTextNode(value));
 
@@ -441,7 +549,10 @@ async function confirmSubmission(
   const result = await showDialog({
     title: SUBMIT_LABEL,
     body: createConfirmationBody(notebookName, markus),
-    buttons: [Dialog.cancelButton(), Dialog.okButton({ label: 'Submit' })]
+    buttons: [
+      Dialog.cancelButton(),
+      Dialog.okButton({ label: 'Submit' })
+    ]
   });
 
   return result.button.accept;
@@ -449,7 +560,8 @@ async function confirmSubmission(
 
 // Report any errors
 async function reportError(error: unknown): Promise<void> {
-  const message = error instanceof Error ? error.message : String(error);
+  const message =
+    error instanceof Error ? error.message : String(error);
 
   console.error(`[${SUBMIT_LABEL}]`, error);
 
@@ -461,25 +573,41 @@ async function reportError(error: unknown): Promise<void> {
 }
 
 // Submitting the file to server
-async function submitToMarkUs(tracker: INotebookTracker, settings: ISettingRegistry.ISettings): Promise<void> {
+async function submitToMarkUs(
+  tracker: INotebookTracker,
+  settings: ISettingRegistry.ISettings
+): Promise<void> {
   try {
     const panel = getCurrentNotebookPanel(tracker);
 
     await panel.context.save();
 
     const markusUrl = getMarkusUrl(settings);
-    assertTrustedOrigin(markusUrl, getTrustedOrigins(settings));
+
+    assertTrustedOrigin(
+      markusUrl,
+      getTrustedOrigins(settings)
+    );
 
     const markus = await selectSubmissionTarget(markusUrl);
 
     if (!markus) {
       return;
     }
-    if (!(await confirmSubmission(getNotebookName(panel), markus))) {
+
+    if (
+      !(await confirmSubmission(
+        getNotebookName(panel),
+        markus
+      ))
+    ) {
       return;
     }
 
-    const result = await submitWithSessionRetry(panel, markus);
+    const result = await submitWithSessionRetry(
+      panel,
+      markus
+    );
 
     await reportSuccess(result);
   } catch (error) {
@@ -488,8 +616,13 @@ async function submitToMarkUs(tracker: INotebookTracker, settings: ISettingRegis
 }
 
 // Adding the function as a toolbar button
-function addToolbarButton(panel: NotebookPanel, app: JupyterFrontEnd): void {
-  if (Array.from(panel.toolbar.names()).includes(COMMAND_ID)) {
+function addToolbarButton(
+  panel: NotebookPanel,
+  app: JupyterFrontEnd
+): void {
+  if (
+    Array.from(panel.toolbar.names()).includes(COMMAND_ID)
+  ) {
     return;
   }
 
@@ -502,38 +635,55 @@ function addToolbarButton(panel: NotebookPanel, app: JupyterFrontEnd): void {
     }
   });
 
-  panel.toolbar.insertItem(10, COMMAND_ID, button);
+  panel.toolbar.insertItem(
+    10,
+    COMMAND_ID,
+    button
+  );
 }
 
 // Creating the Jupyter Frontend Plugin
 const plugin: JupyterFrontEndPlugin<void> = {
   id: PLUGIN_ID,
-  description: 'Submit the current notebook to MarkUs by asking MarkUs to fetch it from JupyterHub/Jupyter Server.',
+  description:
+    'Submit the current notebook to MarkUs by asking MarkUs to fetch it from JupyterHub/Jupyter Server.',
   autoStart: true,
   requires: [INotebookTracker, ISettingRegistry],
   optional: [ICommandPalette],
+
   activate: async (
     app: JupyterFrontEnd,
     tracker: INotebookTracker,
     settingRegistry: ISettingRegistry,
     palette: ICommandPalette | null
   ) => {
-    console.log('JupyterLab extension jupyterlab-markus-extension is activated.');
+    console.log(
+      'JupyterLab extension jupyterlab-markus-extension is activated.'
+    );
 
-    // Detect presence of JupyterHub identity, which is required for this extension.
-    const hasHubIdentity = Boolean(PageConfig.getOption('hubUser'));
+    // Detect presence of JupyterHub identity, which is required
+    // for this extension.
+    const hasHubIdentity = Boolean(
+      PageConfig.getOption('hubUser')
+    );
 
     if (!hasHubIdentity) {
-      console.warn(`[${SUBMIT_LABEL}] No JupyterHub identity found. The "Submit to MarkUs" button will not be shown.`);
+      console.warn(
+        `[${SUBMIT_LABEL}] No JupyterHub identity found. The "Submit to MarkUs" button will not be shown.`
+      );
     }
 
-    const settings = await settingRegistry.load(PLUGIN_ID);
+    const settings =
+      await settingRegistry.load(PLUGIN_ID);
 
     app.commands.addCommand(COMMAND_ID, {
       label: SUBMIT_LABEL,
       caption: SUBMIT_LABEL,
       execute: async () => {
-        await submitToMarkUs(tracker, settings);
+        await submitToMarkUs(
+          tracker,
+          settings
+        );
       }
     });
 
@@ -545,12 +695,17 @@ const plugin: JupyterFrontEndPlugin<void> = {
     }
 
     if (hasHubIdentity) {
-      tracker.widgetAdded.connect((_sender, panel) => {
-        addToolbarButton(panel, app);
-      });
+      tracker.widgetAdded.connect(
+        (_sender, panel) => {
+          addToolbarButton(panel, app);
+        }
+      );
 
       if (tracker.currentWidget) {
-        addToolbarButton(tracker.currentWidget, app);
+        addToolbarButton(
+          tracker.currentWidget,
+          app
+        );
       }
     }
   }

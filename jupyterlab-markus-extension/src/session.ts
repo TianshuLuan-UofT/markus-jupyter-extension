@@ -25,6 +25,7 @@ export interface IMarkUsAssignment {
   id: number;
   short_identifier: string;
   description: string | null;
+  due_date: string | null;
 }
 
 export interface IMarkUsCourse {
@@ -37,6 +38,10 @@ export interface IMarkUsCourse {
 export interface IAssignmentsResponse {
   status: string;
   courses: IMarkUsCourse[];
+  reason?:
+      | 'no_enrollment'
+      | 'no_available_assignments'
+      | 'api_submission_disabled';
   message?: string;
 }
 

@@ -14,9 +14,7 @@
       "items": {
         "type": "string"
       },
-      "default": [
-        "https://markus.teach.cs.toronto.edu"
-      ],
+      "default": ["https://markus.teach.cs.toronto.edu"],
       "title": "Trusted MarkUs origins",
       "description": "Origins that the extension is allowed to contact."
     }
